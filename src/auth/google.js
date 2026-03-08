@@ -76,8 +76,9 @@ export function signIn() {
       } catch (_) {}
       resolve(response);
     };
-    // prompt: '' means don't re-ask for consent if previously granted
-    tokenClient.requestAccessToken({ prompt: '' });
+    // 'select_account' shows the account picker; omitting prompt causes
+    // GIS to throw "Params are not set" when passed an empty string
+    tokenClient.requestAccessToken({ prompt: 'select_account' });
   });
 }
 
