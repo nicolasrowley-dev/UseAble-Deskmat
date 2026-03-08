@@ -5,7 +5,7 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { initAuth, signIn, signOut, isSignedIn } from './auth/google';
 import {
   listFiles, renameFile, trashFile, moveFile, copyFile,
-  createFolder, createDocument, createSpreadsheet, createPresentation,
+  createFolder, createDocument, createSpreadsheet, createPresentation, createTextFile,
   getOpenUrl, countChildren,
 } from './api/drive';
 import { configSync } from './hooks/useConfigSync';
@@ -82,6 +82,13 @@ function getAutoArrangePositions(sortedFiles, fences) {
 
   return newPositions;
 }
+
+// Snap coordinates to a grid anchored at (fence.x + 10, fence.y + 34)
+// so icons inside a fence align to a local grid, not the global desktop grid.
+const snapToFenceGrid = (x, y, fence) => ({
+  x: fence.x + 10 + Math.round((x - fence.x - 10) / GRID_SIZE) * GRID_SIZE,
+  y: fence.y + 34 + Math.round((y - fence.y - 34) / GRID_SIZE) * GRID_SIZE,
+});
 
 // Normalise positions loaded from config: snap all to grid
 function normalisePositions(positions) {
@@ -305,6 +312,7 @@ export default function App() {
   const touchStartedDrag   = useRef(false);
   const countFetchingRef   = useRef(new Set());
   const positionsRef       = useRef(positions);
+  const fencesRef          = useRef(fences);
   const visibleFilesRef    = useRef([]);
   const selectionBoxRef    = useRef(null);
   // Prevent handleCanvasClick from clearing selection right after rubber-band ends
@@ -320,6 +328,7 @@ export default function App() {
 
   // Keep refs up-to-date for use in event handlers without stale closures
   positionsRef.current    = positions;
+  fencesRef.current       = fences;
   visibleFilesRef.current = visibleFiles;
   selectionBoxRef.current = selectionBox;
 
@@ -447,6 +456,37 @@ export default function App() {
     el.addEventListener('touchmove', prevent, { passive: false });
     return () => el.removeEventListener('touchmove', prevent);
   }, [dragging]);
+
+  // Reposition fences when the viewport is resized — anchor them to the
+  // bottom-right so they move with the window edges rather than staying fixed
+  // at the top-left origin (which leaves them off-screen on shrink).
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    let prevW = window.innerWidth;
+    let prevH = window.innerHeight;
+
+    const handleResize = () => {
+      const newW = window.innerWidth;
+      const newH = window.innerHeight;
+      const dw = newW - prevW;
+      const dh = newH - prevH;
+      if (Math.abs(dw) < 2 && Math.abs(dh) < 2) return;
+
+      setFences(prev => prev.map(f => ({
+        ...f,
+        // Move by the full delta so distance from right/bottom edge stays constant.
+        // Clamp so fence can't go off the top-left corner either.
+        x: Math.max(0, Math.min(newW - f.w, f.x + dw)),
+        y: Math.max(0, Math.min(newH - 48 - (f.rolledUp ? 36 : f.h), f.y + dh)),
+      })));
+
+      prevW = newW;
+      prevH = newH;
+    };
+
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, [isAuthenticated]);
 
   // ─── Auth handlers ─────────────────────────────────────────────────────────
 
@@ -678,8 +718,20 @@ export default function App() {
     }
 
     if (!dragging) return;
-    setDragPreview(snapToGrid(cx - dragOffset.x, cy - dragOffset.y));
-    if (dragging.type === 'file') setDropTarget(findFolderUnderCursor(cx, cy));
+
+    if (dragging.type === 'file') {
+      const rawX = cx - dragOffset.x;
+      const rawY = cy - dragOffset.y;
+      // Use fence-local snap grid if this file is a member of a fence
+      const ownerFence = fencesRef.current.find(f => (f.members || []).includes(dragging.id));
+      const snapped = ownerFence
+        ? snapToFenceGrid(rawX, rawY, ownerFence)
+        : snapToGrid(rawX, rawY);
+      setDragPreview(snapped);
+      setDropTarget(findFolderUnderCursor(cx, cy));
+    } else {
+      setDragPreview(snapToGrid(cx - dragOffset.x, cy - dragOffset.y));
+    }
   }, [dragging, dragOffset, resizing, findFolderUnderCursor]);
 
   const handlePointerUp = useCallback(async () => {
@@ -690,7 +742,34 @@ export default function App() {
       return;
     }
 
-    if (resizing) { setResizing(null); return; }
+    if (resizing) {
+      // Re-arrange fence members if any now fall outside the (possibly-shrunk) fence
+      const fence = fencesRef.current.find(f => f.id === resizing.fenceId);
+      if (fence) {
+        const members = fence.members || [];
+        const cur = positionsRef.current;
+        const anyOutside = members.some(id => {
+          const p = cur[id];
+          return p && (p.x < fence.x + 10 || p.x + ICON_W > fence.x + fence.w ||
+                       p.y < fence.y + 34 || p.y + ICON_H > fence.y + fence.h);
+        });
+        if (anyOutside) {
+          const innerCols = Math.max(1, Math.floor((fence.w - 20) / GRID_SIZE));
+          setPositions(prev => {
+            const n = { ...prev };
+            members.forEach((id, i) => {
+              n[id] = {
+                x: fence.x + 10 + (i % innerCols) * GRID_SIZE,
+                y: fence.y + 34 + Math.floor(i / innerCols) * GRID_SIZE,
+              };
+            });
+            return n;
+          });
+        }
+      }
+      setResizing(null);
+      return;
+    }
 
     if (dragging?.type === 'file' && dropTarget) {
       const draggedIds = selected.has(dragging.id) && selected.size > 1 ? [...selected] : [dragging.id];
@@ -699,6 +778,13 @@ export default function App() {
       setPositions(prev => { const n = { ...prev }; draggedIds.forEach(id => delete n[id]); return n; });
       // Remove dropped files from fence membership
       setFences(prev => prev.map(f => ({ ...f, members: (f.members || []).filter(id => !draggedIds.includes(id)) })));
+      // Update the target folder's badge count
+      setFolderCounts(prev => {
+        const existing = loadedFolders.has(dropTarget)
+          ? files.filter(f => f.parentId === dropTarget).length
+          : (prev[dropTarget] ?? 0);
+        return { ...prev, [dropTarget]: existing + draggedIds.length };
+      });
       showToast(`Moving ${draggedIds.length} ${draggedIds.length === 1 ? 'item' : 'items'} into "${targetFolder?.name}"…`);
       setSelected(new Set()); setDragging(null); setDragPreview(null); setDropTarget(null);
       try {
@@ -744,12 +830,9 @@ export default function App() {
           setPositions(prev => {
             const n = { ...prev };
             const members = new Set(fence.members || []);
+            // Only move EXPLICIT members — never absorb icons that happen to be nearby
             Object.entries(n).forEach(([id, pos]) => {
-              // Move all files that are members of this fence
               if (members.has(id)) n[id] = { x: pos.x + dx, y: pos.y + dy };
-              // Also move non-member files that happen to be inside the fence bounds (backward compat)
-              else if (pos.x >= fence.x && pos.x < fence.x + fence.w && pos.y >= fence.y && pos.y < fence.y + fence.h)
-                n[id] = { x: pos.x + dx, y: pos.y + dy };
             });
             return n;
           });
@@ -949,6 +1032,8 @@ export default function App() {
                 const f = files.find(x => x.id === id);
                 return moveFile(id, newFolder.id, f?.parentId ?? null);
               }));
+              // Badge count: the new folder contains exactly the moved files
+              setFolderCounts(prev => ({ ...prev, [newFolder.id]: idArr.length }));
               showToast(`Moved ${count} files into "${newFolder.name}"`);
               // Open rename dialog for the folder
               setTimeout(() => setRenameTarget(newFolder), 50);
@@ -1028,18 +1113,27 @@ export default function App() {
         label: 'New folder', icon: '📁',
         onClick: async () => handleCreateFile(createFolder, 'New Folder', cp),
       },
-      { type: 'label', text: 'New file' },
       {
-        label: 'Google Doc', icon: '📝',
-        onClick: () => handleCreateFile(createDocument, 'Untitled Document', cp),
-      },
-      {
-        label: 'Google Sheet', icon: '📊',
-        onClick: () => handleCreateFile(createSpreadsheet, 'Untitled Spreadsheet', cp),
-      },
-      {
-        label: 'Google Slides', icon: '📽️',
-        onClick: () => handleCreateFile(createPresentation, 'Untitled Presentation', cp),
+        type: 'submenu', label: 'New file', icon: '📄',
+        children: [
+          {
+            label: 'Google Doc', icon: '📝',
+            onClick: () => handleCreateFile(createDocument, 'Untitled Document', cp),
+          },
+          {
+            label: 'Google Sheet', icon: '📊',
+            onClick: () => handleCreateFile(createSpreadsheet, 'Untitled Spreadsheet', cp),
+          },
+          {
+            label: 'Google Slides', icon: '📽️',
+            onClick: () => handleCreateFile(createPresentation, 'Untitled Presentation', cp),
+          },
+          { type: 'divider' },
+          {
+            label: 'Text file (.txt)', icon: '📃',
+            onClick: () => handleCreateFile(createTextFile, 'Untitled.txt', cp),
+          },
+        ],
       },
       { type: 'divider' },
       {

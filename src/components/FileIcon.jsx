@@ -52,6 +52,15 @@ export function getFileIcon(type, size = 44) {
         <path d="M8 32l8-10 6 6 6-8 12 12H8z" fill="#AB47BC" opacity="0.7"/>
       </svg>
     ),
+    text: (
+      <svg viewBox="0 0 48 48" width={size} height={size}>
+        <path d="M10 4h20l10 10v30H10z" fill="#FAFAFA" stroke="#757575" strokeWidth="1.5"/>
+        <path d="M30 4v10h10" fill="#E0E0E0" stroke="#757575" strokeWidth="1.5"/>
+        <line x1="16" y1="22" x2="34" y2="22" stroke="#9E9E9E" strokeWidth="1.5"/>
+        <line x1="16" y1="28" x2="34" y2="28" stroke="#9E9E9E" strokeWidth="1.5"/>
+        <line x1="16" y1="34" x2="26" y2="34" stroke="#9E9E9E" strokeWidth="1.5"/>
+      </svg>
+    ),
   };
   return icons[type] || icons.document;
 }

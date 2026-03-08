@@ -48,9 +48,11 @@ function mimeToType(mimeType) {
     'application/vnd.google-apps.spreadsheet': 'spreadsheet',
     'application/vnd.google-apps.presentation': 'presentation',
     'application/pdf': 'pdf',
+    'text/plain': 'text',
   };
   if (map[mimeType]) return map[mimeType];
   if (mimeType.startsWith('image/')) return 'image';
+  if (mimeType.startsWith('text/')) return 'text';
   if (mimeType.includes('spreadsheet') || mimeType.includes('excel')) return 'spreadsheet';
   if (mimeType.includes('presentation') || mimeType.includes('powerpoint')) return 'presentation';
   if (mimeType.includes('document') || mimeType.includes('word')) return 'document';
@@ -180,6 +182,48 @@ export async function createPresentation(name, parentId = null) {
     }),
   });
   return result ? normaliseFile(result, parentId) : null;
+}
+
+// Create an empty plain-text file using multipart upload
+export async function createTextFile(name, parentId = null) {
+  const parents = parentId === null ? ['root'] : [parentId];
+  const token = getToken();
+  if (!token) throw new Error('Not authenticated');
+
+  const boundary = 'deskmat_boundary_' + Date.now();
+  const metadata = JSON.stringify({ name, mimeType: 'text/plain', parents });
+  const body = [
+    `--${boundary}`,
+    'Content-Type: application/json; charset=UTF-8',
+    '',
+    metadata,
+    `--${boundary}`,
+    'Content-Type: text/plain',
+    '',
+    '',
+    `--${boundary}--`,
+  ].join('\r\n');
+
+  const response = await fetch(
+    'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart',
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': `multipart/related; boundary=${boundary}`,
+      },
+      body,
+    }
+  );
+
+  if (!response.ok) {
+    let message = `Drive API error ${response.status}`;
+    try { const err = await response.json(); message = err.error?.message || message; } catch (_) {}
+    throw new Error(message);
+  }
+
+  const data = await response.json();
+  return data ? normaliseFile(data, parentId) : null;
 }
 
 // Count children of a folder without fully loading them (minimal fields)
