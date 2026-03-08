@@ -4,15 +4,19 @@ All notable changes to UseAble Deskmat are documented here.
 
 ---
 
-## [Unreleased] — 2026-03-08
+## [Unreleased] — 2026-03-08 (`170d4be`)
 
 ### Fixed
 - **GIS "Params are not set" error** — The Google Identity Services token client is now re-created immediately before each `requestAccessToken` call, preventing stale params from a previously initialised client instance from causing the sign-in popup to fail.
 - **Rubber-band selection instantly unselecting** — A `click` event fires on the canvas immediately after `mouseup`, causing `handleCanvasClick` to wipe the freshly-built selection. A ref guard now suppresses that click when it follows the end of a rubber-band drag.
+- **Fence drag displacing non-member icons** — Dragging a fence over icons that are not its members now pushes those icons to the nearest free grid slot outside all fences, instead of leaving them overlapping. If no displacement is needed the move is unchanged.
+- **Viewport resize leaving unfenced icons off-screen** — The resize handler previously repositioned fences only. It now also clamps any unfenced desktop icons that fall outside the visible area back within the viewport, snapped to the nearest grid cell.
+- **No outer scrollbars** — `html`, `body`, and `#root` are now explicitly `overflow: hidden` via a style block in `index.html`, ensuring the app never produces a page-level scrollbar regardless of icon or fence positions.
 
 ### Added
 - **Create fence from selection** — When multiple files are selected, right-clicking now shows "Create fence from N files". A new fence is created whose bounds exactly wrap the selected files, and those files become its members immediately.
 - **Move files into new folder** — When multiple files are selected, right-clicking shows "Move N files into new folder…". A new Drive folder is created at the desktop root, the selected files are moved into it, and a rename dialog opens so you can name the folder straight away.
+- **Fence vertical scroll** — When a fence is resized so that its visible area is smaller than the content it holds, a scrollbar indicator appears on the right edge of the fence. Scrolling the mouse wheel over the fence scrolls the icons inside it. Icons that are scrolled out of view are clipped to the fence boundary. Stored icon positions are not changed — only the visual rendering is offset.
 
 ---
 
