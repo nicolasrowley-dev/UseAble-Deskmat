@@ -19,6 +19,8 @@ import { BreadcrumbBar } from './components/BreadcrumbBar';
 // ─── Constants ───────────────────────────────────────────────────────────────
 
 const GRID_SIZE = 100;
+const GRID_ORIGIN_X = 10;   // left margin — must match getInitialPositions
+const GRID_ORIGIN_Y = 10;   // top margin — must match getInitialPositions
 const ICON_W = 90;
 const ICON_H = 100;
 const LONG_PRESS_MS = 500;
@@ -30,8 +32,8 @@ let fileIdCounter = Date.now();
 // ─── Utilities ───────────────────────────────────────────────────────────────
 
 const snapToGrid = (x, y) => ({
-  x: Math.round(x / GRID_SIZE) * GRID_SIZE,
-  y: Math.round(y / GRID_SIZE) * GRID_SIZE,
+  x: GRID_ORIGIN_X + Math.round((x - GRID_ORIGIN_X) / GRID_SIZE) * GRID_SIZE,
+  y: GRID_ORIGIN_Y + Math.round((y - GRID_ORIGIN_Y) / GRID_SIZE) * GRID_SIZE,
 });
 
 function getClientPos(e) {
@@ -41,10 +43,13 @@ function getClientPos(e) {
 }
 
 function getInitialPositions(visibleFiles) {
-  const cols = Math.max(1, Math.floor((window.innerWidth - 20) / GRID_SIZE));
+  const cols = Math.max(1, Math.floor((window.innerWidth - GRID_ORIGIN_X * 2) / GRID_SIZE));
   const p = {};
   visibleFiles.forEach((file, i) => {
-    p[file.id] = { x: 10 + (i % cols) * GRID_SIZE, y: 50 + Math.floor(i / cols) * GRID_SIZE };
+    p[file.id] = {
+      x: GRID_ORIGIN_X + (i % cols) * GRID_SIZE,
+      y: GRID_ORIGIN_Y + Math.floor(i / cols) * GRID_SIZE,
+    };
   });
   return p;
 }
@@ -240,14 +245,14 @@ export default function App() {
     const occupied = new Set(
       visibleFiles.filter(f => positions[f.id]).map(f => `${positions[f.id].x},${positions[f.id].y}`)
     );
-    const cols = Math.max(1, Math.floor((window.innerWidth - 20) / GRID_SIZE));
+    const cols = Math.max(1, Math.floor((window.innerWidth - GRID_ORIGIN_X * 2) / GRID_SIZE));
     let slot = 0;
     const np = {};
     missing.forEach(f => {
       let x, y;
       do {
-        x = 10 + (slot % cols) * GRID_SIZE;
-        y = 50 + Math.floor(slot / cols) * GRID_SIZE;
+        x = GRID_ORIGIN_X + (slot % cols) * GRID_SIZE;
+        y = GRID_ORIGIN_Y + Math.floor(slot / cols) * GRID_SIZE;
         slot++;
       } while (occupied.has(`${x},${y}`));
       np[f.id] = { x, y };
