@@ -1542,6 +1542,26 @@ export default function App() {
           onLoadFolder={loadFolderFiles}
           onOpenFile={(file) => window.open(getOpenUrl(file), '_blank')}
           onClose={() => setFolderModal(null)}
+          onRename={(file) => setRenameTarget(file)}
+          onTrash={async (ids) => {
+            setFiles(prev => prev.filter(f => !ids.includes(f.id)));
+            setPositions(prev => { const n = { ...prev }; ids.forEach(id => delete n[id]); return n; });
+            setFences(prev => prev.map(f => ({ ...f, members: (f.members || []).filter(id => !ids.includes(id)) })));
+            showToast('Deleted');
+            try { await Promise.all(ids.map(id => trashFile(id))); }
+            catch { showToast('Delete failed — please try again'); }
+          }}
+          onMove={(ids) => setFolderPicker({ mode: 'move', fileIds: ids })}
+          onCopy={(ids) => setFolderPicker({ mode: 'copy', fileIds: ids })}
+          onDuplicate={async (ids) => {
+            const n = await handleDuplicate(ids);
+            showToast(`Duplicated ${n} item${n === 1 ? '' : 's'}`);
+          }}
+          onFileCreated={(file) => setFiles(prev => {
+            if (prev.some(f => f.id === file.id)) return prev;
+            return [...prev, file];
+          })}
+          onShowToast={showToast}
         />
       )}
 
