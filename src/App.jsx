@@ -357,7 +357,7 @@ export default function App() {
   // Apply a loaded config object to all state
   function applyConfig(config) {
     setPositions(normalisePositions(config.positions || {}));
-    setFences((config.fences || []).map(f => ({ members: [], ...f })));
+    setFences((config.fences || []).map(f => ({ members: [], scrollY: 0, ...f })));
     setWallpaper(config.wallpaper || 'meadow');
     setCustomWallpaper(config.customWallpaper || '');
     setSortBy(config.sortBy || 'manual');
@@ -479,6 +479,23 @@ export default function App() {
         x: Math.max(0, Math.min(newW - f.w, f.x + dw)),
         y: Math.max(0, Math.min(newH - 48 - (f.rolledUp ? 36 : f.h), f.y + dh)),
       })));
+
+      // Clamp unfenced icons that drift off-screen after resize
+      const allFenceMembers = new Set((fencesRef.current || []).flatMap(f => f.members || []));
+      setPositions(prev => {
+        const n = { ...prev };
+        let changed = false;
+        Object.entries(n).forEach(([id, pos]) => {
+          if (allFenceMembers.has(id)) return; // fenced icons move with their fence
+          const clampedX = Math.min(newW - ICON_W, Math.max(GRID_ORIGIN_X, pos.x));
+          const clampedY = Math.min(newH - 48 - ICON_H, Math.max(GRID_ORIGIN_Y, pos.y));
+          if (clampedX !== pos.x || clampedY !== pos.y) {
+            n[id] = snapToGrid(clampedX, clampedY);
+            changed = true;
+          }
+        });
+        return changed ? n : prev;
+      });
 
       prevW = newW;
       prevH = newH;
@@ -826,14 +843,50 @@ export default function App() {
         const fence = fences.find(f => f.id === dragging.id);
         if (fence) {
           const dx = dragPreview.x - fence.x, dy = dragPreview.y - fence.y;
-          setFences(prev => prev.map(f => f.id === dragging.id ? { ...f, x: dragPreview.x, y: dragPreview.y } : f));
+          const newFenceRect = { x: dragPreview.x, y: dragPreview.y, w: fence.w, h: fence.h };
+          const members = new Set(fence.members || []);
+
+          // All fence rects after the move (used for collision checking)
+          const updatedFences = fences.map(f =>
+            f.id === dragging.id ? { ...f, x: dragPreview.x, y: dragPreview.y } : f
+          );
+
+          setFences(updatedFences);
           setPositions(prev => {
             const n = { ...prev };
-            const members = new Set(fence.members || []);
-            // Only move EXPLICIT members — never absorb icons that happen to be nearby
+
+            // Move explicit fence members with the fence
             Object.entries(n).forEach(([id, pos]) => {
               if (members.has(id)) n[id] = { x: pos.x + dx, y: pos.y + dy };
             });
+
+            // Push non-member icons that now overlap the fence's new position
+            const cols = Math.max(1, Math.floor((window.innerWidth - GRID_ORIGIN_X * 2) / GRID_SIZE));
+            const occupied = new Set(Object.entries(n).map(([, p]) => `${p.x},${p.y}`));
+
+            Object.entries(n).forEach(([id, pos]) => {
+              if (members.has(id)) return; // fence members already moved
+              const overlapX = pos.x < newFenceRect.x + newFenceRect.w && pos.x + ICON_W > newFenceRect.x;
+              const overlapY = pos.y < newFenceRect.y + newFenceRect.h && pos.y + ICON_H > newFenceRect.y;
+              if (!overlapX || !overlapY) return;
+
+              // Find nearest free slot not inside any fence
+              occupied.delete(`${pos.x},${pos.y}`);
+              let slot = 0, newX, newY;
+              do {
+                newX = GRID_ORIGIN_X + (slot % cols) * GRID_SIZE;
+                newY = GRID_ORIGIN_Y + Math.floor(slot / cols) * GRID_SIZE;
+                slot++;
+              } while (
+                occupied.has(`${newX},${newY}`) ||
+                updatedFences.some(f =>
+                  newX < f.x + f.w && newX + ICON_W > f.x && newY < f.y + f.h && newY + ICON_H > f.y
+                )
+              );
+              n[id] = { x: newX, y: newY };
+              occupied.add(`${newX},${newY}`);
+            });
+
             return n;
           });
         }
@@ -916,6 +969,15 @@ export default function App() {
     loadFolderFiles(file.id);
     setFolderModal({ folderId: file.id, name: file.name });
   }, [loadFolderFiles]);
+
+  // Handle scroll wheel on a fence — clamps scrollY within [0, maxScroll]
+  const handleFenceScroll = useCallback((fenceId, deltaY, maxScroll) => {
+    setFences(prev => prev.map(f => {
+      if (f.id !== fenceId) return f;
+      const next = Math.max(0, Math.min(maxScroll, (f.scrollY || 0) + deltaY));
+      return { ...f, scrollY: next };
+    }));
+  }, []);
 
   // ─── New file creation ──────────────────────────────────────────────────────
 
@@ -1000,7 +1062,7 @@ export default function App() {
               x: minX, y: minY,
               w: Math.max(300, maxX - minX),
               h: Math.max(150, maxY - minY),
-              rolledUp: false,
+              rolledUp: false, scrollY: 0,
               members: [...idArr],
             };
             setFences(prev => {
@@ -1179,7 +1241,7 @@ export default function App() {
       {
         label: 'Create fence', icon: '▢',
         onClick: () => {
-          setFences(p => [...p, { id: `fence-${fenceIdCounter++}`, name: 'New Group', x: cp.x, y: cp.y, w: 300, h: 300, rolledUp: false, members: [] }]);
+          setFences(p => [...p, { id: `fence-${fenceIdCounter++}`, name: 'New Group', x: cp.x, y: cp.y, w: 300, h: 300, rolledUp: false, scrollY: 0, members: [] }]);
           setContextMenu(null);
         },
       },
@@ -1320,6 +1382,7 @@ export default function App() {
               onRemoveFence={(id) => setFences(p => p.filter(f => f.id !== id))}
               onRenameFence={(id) => { const f = fences.find(x => x.id === id); if (f) setRenameFenceTarget(f); }}
               onResizeStart={handleResizeStart}
+              onScroll={handleFenceScroll}
             />
           );
         })}
@@ -1329,10 +1392,32 @@ export default function App() {
           const pos = getIconPosition(file.id);
           if (!pos) return null;
 
+          // Find the fence this file belongs to (for scroll clipping)
+          const ownerFence = fences.find(f => (f.members || []).includes(file.id));
+          const scrollY = (ownerFence && !ownerFence.rolledUp) ? (ownerFence.scrollY || 0) : 0;
+          // Visual position accounts for fence scroll
+          const visualY = pos.y - scrollY;
+
           const inRolled = fences.some(f =>
-            f.rolledUp && pos.x >= f.x && pos.x < f.x + f.w && pos.y >= f.y && pos.y < f.y + f.h
+            f.rolledUp && (f.members || []).includes(file.id)
           );
           if (inRolled && !(dragging?.type === 'file' && (dragging.id === file.id || (selected.has(file.id) && selected.has(dragging.id))))) return null;
+
+          // Clip icon to its fence's visible area
+          let clipPath;
+          if (ownerFence && !ownerFence.rolledUp) {
+            const fenceBottom = ownerFence.y + ownerFence.h;
+            const fenceTop = ownerFence.y + 34; // below title bar
+            const topClip    = Math.max(0, fenceTop - visualY);
+            const bottomClip = Math.max(0, visualY + ICON_H - fenceBottom);
+            const leftClip   = Math.max(0, ownerFence.x - pos.x);
+            const rightClip  = Math.max(0, pos.x + ICON_W - (ownerFence.x + ownerFence.w));
+            // Skip entirely if scrolled completely out of view
+            if (topClip >= ICON_H || bottomClip >= ICON_H) return null;
+            if (topClip > 0 || bottomClip > 0 || leftClip > 0 || rightClip > 0) {
+              clipPath = `inset(${topClip}px ${rightClip}px ${bottomClip}px ${leftClip}px)`;
+            }
+          }
 
           const isSel    = selected.has(file.id);
           const isDrag   = dragging?.type === 'file' && dragging.id === file.id;
@@ -1347,8 +1432,9 @@ export default function App() {
               onContextMenu={(e) => handleFileContextMenu(e, file)}
               onDoubleClick={() => handleDoubleClick(file)}
               style={{
-                position: 'absolute', left: pos.x, top: pos.y,
+                position: 'absolute', left: pos.x, top: visualY,
                 width: ICON_W, height: ICON_H,
+                clipPath,
                 display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-start',
                 gap: 3, padding: '6px 4px', borderRadius: 8, touchAction: 'none',
                 cursor: dragging ? 'grabbing' : 'pointer',
