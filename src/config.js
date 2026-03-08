@@ -5,7 +5,7 @@
 
 export const CONFIG = {
   // ⚠️  Replace this with your actual Client ID from Google Cloud Console
-  GOOGLE_CLIENT_ID: 'YOUR-CLIENT-ID-HERE.apps.googleusercontent.com',
+  GOOGLE_CLIENT_ID: '752970574118-rpj1tej575v110okdg61cc05phrp3h1r.apps.googleusercontent.com',
 
   // Google Drive API
   DRIVE_API_BASE: 'https://www.googleapis.com/drive/v3',
