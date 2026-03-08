@@ -154,6 +154,46 @@ export async function createDocument(name, parentId = null) {
   return result ? normaliseFile(result, parentId) : null;
 }
 
+export async function createSpreadsheet(name, parentId = null) {
+  const parents = parentId === null ? ['root'] : [parentId];
+  const result = await driveRequest('/files', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      name,
+      mimeType: 'application/vnd.google-apps.spreadsheet',
+      parents,
+    }),
+  });
+  return result ? normaliseFile(result, parentId) : null;
+}
+
+export async function createPresentation(name, parentId = null) {
+  const parents = parentId === null ? ['root'] : [parentId];
+  const result = await driveRequest('/files', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      name,
+      mimeType: 'application/vnd.google-apps.presentation',
+      parents,
+    }),
+  });
+  return result ? normaliseFile(result, parentId) : null;
+}
+
+// Count children of a folder without fully loading them (minimal fields)
+export async function countChildren(folderId) {
+  try {
+    const query = `'${folderId}' in parents and trashed = false`;
+    const params = new URLSearchParams({ q: query, fields: 'files(id)', pageSize: '1000' });
+    const data = await driveRequest(`/files?${params}`);
+    return (data.files || []).length;
+  } catch (e) {
+    return null;
+  }
+}
+
 // Return a URL that opens the file in Google Drive / the appropriate editor
 export function getOpenUrl(file) {
   if (file.webLink) return file.webLink;
