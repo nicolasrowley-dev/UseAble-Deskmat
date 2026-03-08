@@ -307,6 +307,8 @@ export default function App() {
   const positionsRef       = useRef(positions);
   const visibleFilesRef    = useRef([]);
   const selectionBoxRef    = useRef(null);
+  // Prevent handleCanvasClick from clearing selection right after rubber-band ends
+  const justFinishedRubberBandRef = useRef(false);
 
   // Desktop root = rootFolderId when set, else Drive root (parentId null for root files)
   // Drive API uses 'root' as folderId; normaliseFile maps 'root' parentId → null
@@ -684,6 +686,7 @@ export default function App() {
     // End rubber-band selection
     if (selectionBoxRef.current) {
       setSelectionBox(null);
+      justFinishedRubberBandRef.current = true;
       return;
     }
 
@@ -757,6 +760,12 @@ export default function App() {
   }, [dragging, dragPreview, positions, selected, fences, resizing, dropTarget, files]);
 
   const handleCanvasClick = (e) => {
+    // If we just finished a rubber-band drag, don't clear the selection on the
+    // click event that fires immediately after mouseup
+    if (justFinishedRubberBandRef.current) {
+      justFinishedRubberBandRef.current = false;
+      return;
+    }
     if (e.target === canvasRef.current || e.target.classList.contains('desktop-canvas')) setSelected(new Set());
   };
 
@@ -885,6 +894,66 @@ export default function App() {
         onClick: () => {
           setFences(prev => prev.map(f => f.id === fenceContaining.id ? { ...f, members: (f.members || []).filter(id => id !== file.id) } : f));
           setContextMenu(null);
+        },
+      });
+    }
+
+    // Multi-selection group actions
+    if (multi) {
+      items.push({ type: 'divider' });
+      items.push({
+        label: `Create fence from ${count} files`, icon: '▢',
+        onClick: () => {
+          // Calculate bounding box of all selected files
+          const selectedPositions = idArr.map(id => positionsRef.current[id]).filter(Boolean);
+          if (selectedPositions.length > 0) {
+            const minX = Math.min(...selectedPositions.map(p => p.x)) - 10;
+            const minY = Math.min(...selectedPositions.map(p => p.y)) - 34;
+            const maxX = Math.max(...selectedPositions.map(p => p.x)) + ICON_W + 10;
+            const maxY = Math.max(...selectedPositions.map(p => p.y)) + ICON_H + 10;
+            const newFence = {
+              id: `fence-${fenceIdCounter++}`,
+              name: 'New Group',
+              x: minX, y: minY,
+              w: Math.max(300, maxX - minX),
+              h: Math.max(150, maxY - minY),
+              rolledUp: false,
+              members: [...idArr],
+            };
+            setFences(prev => {
+              // Remove these files from any existing fence memberships
+              const cleaned = prev.map(f => ({ ...f, members: (f.members || []).filter(id => !idArr.includes(id)) }));
+              return [...cleaned, newFence];
+            });
+          }
+          setContextMenu(null);
+        },
+      });
+      items.push({
+        label: `Move ${count} files into new folder…`, icon: '📁',
+        onClick: async () => {
+          setContextMenu(null);
+          try {
+            const newFolder = await createFolder('New Folder', desktopParentId);
+            if (newFolder) {
+              // Optimistic UI: move files into the new folder
+              setFiles(prev => [
+                ...prev.map(f => idArr.includes(f.id) ? { ...f, parentId: newFolder.id } : f),
+                newFolder,
+              ]);
+              setPositions(prev => { const n = { ...prev }; idArr.forEach(id => delete n[id]); return n; });
+              setFences(prev => prev.map(f => ({ ...f, members: (f.members || []).filter(id => !idArr.includes(id)) })));
+              setSelected(new Set());
+              // Drive API: move files
+              await Promise.all(idArr.map(id => {
+                const f = files.find(x => x.id === id);
+                return moveFile(id, newFolder.id, f?.parentId ?? null);
+              }));
+              showToast(`Moved ${count} files into "${newFolder.name}"`);
+              // Open rename dialog for the folder
+              setTimeout(() => setRenameTarget(newFolder), 50);
+            }
+          } catch (e) { showToast('Could not create folder'); }
         },
       });
     }

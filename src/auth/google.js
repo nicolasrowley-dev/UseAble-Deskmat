@@ -58,8 +58,17 @@ function _loadStoredToken() {
 // Prompt the user to sign in (opens Google's OAuth popup)
 export function signIn() {
   return new Promise((resolve, reject) => {
-    if (!tokenClient) {
-      reject(new Error('Auth not initialised — call initAuth() first'));
+    if (!window.google?.accounts?.oauth2) {
+      reject(new Error('Google Identity Services not loaded'));
+      return;
+    }
+    // Always re-create the token client immediately before requesting a token.
+    // Reusing the instance created at initAuth() time can leave params in a
+    // stale / unset state, causing the "Params are not set" GIS error.
+    try {
+      tokenClient = _createTokenClient();
+    } catch (e) {
+      reject(new Error('Failed to initialise auth client: ' + e.message));
       return;
     }
     tokenClient.callback = (response) => {
@@ -76,8 +85,8 @@ export function signIn() {
       } catch (_) {}
       resolve(response);
     };
-    // 'select_account' shows the account picker; omitting prompt causes
-    // GIS to throw "Params are not set" when passed an empty string
+    // 'select_account' shows the account picker; empty string causes
+    // GIS to throw "Params are not set"
     tokenClient.requestAccessToken({ prompt: 'select_account' });
   });
 }
